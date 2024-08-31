@@ -1,0 +1,30 @@
+﻿@page "/login"
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+@inject ILocalStorageService LocalStorage
+
+<h3>Login</h3>
+
+<div>
+    <input @bind="userModel.Username" placeholder="Username" />
+    <input @bind="userModel.Password" placeholder="Password" type="password" />
+    <button @onclick="Logins">Login</button>
+</div>
+
+<p>@message</p>
+
+@code {
+    private UserModel userModel = new UserModel();
+    private string message;
+
+    private async Task Logins()
+    {
+        message = await AuthService.LoginAsync(userModel);
+        if (message == "Login successful.")
+        {
+            // Save the username in local storage for later use
+            await LocalStorage.SetItemAsync("currentUserName", userModel.Username);
+            Navigation.NavigateTo("/chat");
+        }
+    }
+}

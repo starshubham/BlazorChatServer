@@ -1,0 +1,27 @@
+﻿@page "/register"
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+
+<h3>Register</h3>
+
+<div>
+    <input @bind="userModel.Username" placeholder="Username" />
+    <input @bind="userModel.Password" placeholder="Password" type="password" />
+    <button @onclick="Register">Register</button>
+</div>
+
+<p>@message</p>
+
+@code {
+    private UserModel userModel = new UserModel();
+    private string message;
+
+    private async Task Register()
+    {
+        message = await AuthService.RegisterAsync(userModel);
+        if (message == "User registered successfully.")
+        {
+            Navigation.NavigateTo("/login");
+        }
+    }
+}

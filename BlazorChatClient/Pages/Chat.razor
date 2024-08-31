@@ -1,0 +1,218 @@
+﻿@page "/chat"
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Navigation
+@inject AuthService AuthService
+@inject ILocalStorageService LocalStorage
+<link href="~/css/custom.css" rel="stylesheet" />
+<style>
+    .chat-list {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .chat-message {
+        max-width: 60%;
+        padding: 10px;
+        border-radius: 10px;
+        margin: 5px;
+        display: inline-block;
+        position: relative;
+    }
+
+        .chat-message.sent {
+            background-color: #D4F8E8; /* Light green for sent messages */
+            align-self: flex-end;
+            border-top-right-radius: 0;
+        }
+
+        .chat-message.received {
+            background-color: #F9F9F9; /* Light white (very light gray) for received messages */
+            align-self: flex-start;
+            border-top-left-radius: 0;
+            border: 1px solid #E0E0E0; /* Light grey border */
+        }
+
+    ul.chat-list {
+        height: 400px;
+        overflow-y: scroll;
+        background-color: #F5F5F5;
+        padding: 10px;
+        border-radius: 10px;
+    }
+
+    .chat-message:after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        width: 0;
+        height: 0;
+        border-style: solid;
+    }
+
+    .chat-message.sent:after {
+        right: -10px;
+        border-width: 10px 0 10px 10px;
+        border-color: transparent transparent transparent #D4F8E8;
+    }
+
+    .chat-message.received:after {
+        left: -10px;
+        border-width: 10px 10px 0;
+        border-color: transparent #F9F9F9 transparent transparent;
+    }
+</style>
+
+<h3>Blazor Chat</h3>
+
+@if (!isLoggedIn)
+{
+    <div>
+        <input @bind="userInput" placeholder="Your name" />
+        <button @onclick="HandleLogin">Login</button>
+    </div>
+}
+else
+{
+    <div>
+        <select @bind="selectedUser">
+            <option value="">Select User</option>
+            @foreach (var user in registeredUsers)
+            {
+                <option value="@user">@user</option>
+            }
+        </select>
+    </div>
+    <div>
+        <input @bind="messageInput" placeholder="Your message" @onkeypress="HandleKeyPress" />
+        <button @onclick="SendMessage" disabled="@(hubConnection is null || hubConnection.State != HubConnectionState.Connected)">Send</button>
+    </div>
+    <ul class="chat-list">
+        @foreach (var message in messages)
+        {
+            <li class="chat-message @(message.StartsWith("You:") ? "sent" : "received")">
+                @message
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private HubConnection? hubConnection;
+    private string? userInput;
+    private string? messageInput;
+    private string? selectedUser;
+    private bool isLoggedIn = false;
+    private List<string> messages = new List<string>();
+    private List<string> registeredUsers = new List<string>();
+    private string? currentUserName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var token = await AuthService.GetAuthTokenAsync();
+        if (string.IsNullOrEmpty(token))
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        currentUserName = await LocalStorage.GetItemAsync<string>("currentUserName");
+        if (string.IsNullOrEmpty(currentUserName))
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        hubConnection = new HubConnectionBuilder()
+      .WithUrl(Navigation.ToAbsoluteUri($"https://localhost:7051/chathub?username={currentUserName}"), options =>
+      {
+          options.AccessTokenProvider = () => Task.FromResult(token);
+      })
+      .Build();
+
+        hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        {
+            var encodedMessage = user == currentUserName ? $"You: {message}" : $"{user}: {message}";
+            messages.Add(encodedMessage);
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            await hubConnection.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error starting connection: {ex.Message}");
+        }
+
+        try
+        {
+            registeredUsers = await AuthService.GetRegisteredUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching users: {ex.Message}");
+            registeredUsers = new List<string>();
+        }
+
+        isLoggedIn = true;
+    }
+
+    private async Task HandleLogin()
+    {
+        if (!string.IsNullOrEmpty(userInput))
+        {
+            currentUserName = userInput;
+            isLoggedIn = true;
+
+            await LocalStorage.SetItemAsync("currentUserName", currentUserName);
+            await hubConnection.SendAsync("SendBroadcastMessage", currentUserName, $"{currentUserName} has joined.");
+            userInput = string.Empty;
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        if (hubConnection is not null && hubConnection.State == HubConnectionState.Connected)
+        {
+            if (!string.IsNullOrEmpty(selectedUser) && !string.IsNullOrEmpty(messageInput))
+            {
+                try
+                {
+                    await hubConnection.SendAsync("SendMessage", currentUserName, selectedUser, messageInput);
+                    messages.Add($"You to {selectedUser}: {messageInput}");
+                    messageInput = string.Empty;
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error sending message: {ex.Message}");
+                }
+            }
+        }
+        else
+        {
+            Console.WriteLine("Connection is not active.");
+        }
+    }
+
+    private void HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            SendMessage();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
